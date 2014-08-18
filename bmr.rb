@@ -22,58 +22,86 @@ class BMR
     @cash = tkr
   end
 
-  def run
-    @tickers.each do |tkr|
-      prices = load_prices(tkr,@lt_period)
+  def set_num_positions(num)
+    @num = num
+  end
+
+  def set_short_term_period(pd)
+    @st_period = pd
+  end
+
+  def set_long_term_period(pd)
+    @lt_period = pd
+  end
+
+  def set_ma_signal_period(pd)
+    @ma_period = pd
+  end
+
+  def generate_rors(today)
+    blended_rors = {}
+    @tickers.map do |tkr|
+puts "tkr=#{tkr}"
+      prices = load_prices(tkr,@lt_period,today)
+      (puts "skip tkr #{tkr}/#{prices.count}"; next) unless prices.count > @lt_period
       st_ror = calc_return(prices,@st_period)
       lt_ror = calc_return(prices,@lt_period)
-      puts "@blended_ror[#{tkr}] = #{@st_wt} * #{st_ror} + (1.0-#{@st_wt}) * #{lt_ror}"
-      @blended_ror[tkr] = @st_wt * st_ror + (1.0-@st_wt) * lt_ror
+      blended_rors[tkr] = calc_blended_ror(st_ror,lt_ror)
     end
+    blended_rors
+  end
 
-    @blended_ror.keys.sort.each do |k|
-      puts "tkr: #{k}  = #{@blended_ror[k]}"
-    end
+  def run(params)
+    today = params.fetch(:asof) { DateTimeHelper::integer_date }
 
-    top_rors = rank(@blended_ror)[0...@num]
-    top_tkrs = cash_override(top_rors)
-    print_report(top_tkrs)
+puts "today=#{today}"
+    YahooProxy.rm_empty_price_files
+
+    blended_rors = generate_rors(today)
+puts "blended_rors=#{blended_rors}"
+
+    ranked = rank(blended_rors)
+
+    top_rors = ranked[0...@num]
+
+    trades = ma_filter(top_rors)
+    print_report(trades)
   end
 
   def create_price_file(tkr)
-    pfile = "prices/#{tkr}_yahoo.data"
-    return if File.exists?(pfile)
-    File.open(pfile, 'w') do |fh|
-      YahooProxy.historical_eod(tkr, 10).each { |rec|
-        puts rec
-        #{:date=>"20040817", :o=>"33.12", :h=>"33.44", :l=>"32.99", :c=>"33.26", :v=>"89573100", :adj=>"30.71"}
-        fh.write "#{rec}\n"
-      }
-    end
+    YahooProxy.create_price_file(tkr)
   end
 
   private
 
+  def calc_blended_ror(st_ror,lt_ror)
+      @st_wt * st_ror + (1.0-@st_wt) * lt_ror
+  end
+
+  def write_ranking_file(fn,ranked)
+    outfile = "rptdir/#{rn}.ranking"
+    File.open(outfile, 'w') { |fh| 
+      ranked.each { |etf| fh.write "%10s %6.2f\n", etf[0],etf[1] }
+    }
+  end
+
   def calc_return(prices,period)
-    puts "(#{prices.first} - #{prices[period-1]}) / #{prices[period-1]}"
     ((prices.first - prices[period-1]) / prices[period-1]) * 100.0
   end
 
-  def load_prices(tkr,period)
-    puts "load_prices(#{tkr},#{period})"
-    return load_price_file(price_file(tkr)) if File.exists?(price_file(tkr))
-puts "!!!!!!"
-return
-    YahooProxy.historical_eod(tkr, (period/264+1)).map { |rec| rec[:c].to_f }
+  def load_prices(tkr,period,today=99999999)
+    return load_price_file(price_file(tkr),today) if File.exists?(price_file(tkr))
+    dts = load_price_file(create_price_file(tkr),today)
+    puts dts
+    dts
   end
 
-  def load_price_file(fn)
-    puts "File.readlines(#{fn}).map { |rec| rec[:c].to_f }"
+  def load_price_file(fn,today=99999999)
     File.readlines(fn).map { |rec|
-      puts rec
-      puts rec.class
-      puts rec[:c]
-      rec[:c].to_f
+      next unless rec.split(",")[0] < today
+      #d,o,h,l,c,v,adj = rec.split(",")
+      #c.to_f
+      rec.split(",")[4].to_f
     }
   end
 
@@ -85,19 +113,17 @@ return
     (h.sort_by &:last).reverse
   end
 
-  def cash_override(tkrs)
-    puts "cash_override(#{tkrs})"
-    tkrs.map { |tkr| ma_signal?(tkr) ? tkr : @cash }
+  def ma_filter(top_n)
+    top_n.map { |tkr,ror| ma_signal?(tkr) ? tkr : @cash }
   end
 
   def ma_signal?(tkr)
-    prices = load_prices(tkr, @ma_period)
+    prices = load_prices(tkr, @ma_period,today)
     prices.last > calc_sma(prices,@ma_period)
   end
 
   def calc_sma(values,period)
-    values[0...period].reduce( :+ ) / period
-  end
+    values[0...period].reduce( :+ ) / period end
 
   def print_report(trades)
     pos_percent = 100.0 / @num
@@ -113,10 +139,25 @@ return
   end
 end
 
+=begin
 bmr = BMR.new
-#bmr.send "load_prices", "Z", 132
 symbol_file = ARGV.shift
-#File.open(symbol_file).each { |tkr| bmr.add_ticker(tkr.chomp) }
-#allocs = bmr.run
+File.open(symbol_file).each { |tkr| bmr.add_ticker(tkr.chomp) }
+allocs = bmr.run
+=end
 
-File.open(symbol_file).each { |tkr| puts tkr;bmr.create_price_file(tkr.chomp) }
+__END__
+
+bmr = BMR.new
+bmr.set_num_positions(3)
+bmr.set_short_term_period("3m")
+bmr.set_long_term_period("6m")
+bmr.set_ma_signal_period("4m")
+
+bt = BackTester.new(bmr)
+symbol_file = ARGV.shift
+File.open(symbol_file).each { |tkr| bt.add_ticker(tkr.chomp) }
+bt.reset(today,100_000)
+bt.rebalance_period("eom",3)
+bt.run
+bt.report
