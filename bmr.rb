@@ -41,7 +41,6 @@ class BMR
   def generate_rors(today)
     blended_rors = {}
     @tickers.map do |tkr|
-puts "tkr=#{tkr}"
       prices = load_prices(tkr,@lt_period,today)
       (puts "skip tkr #{tkr}/#{prices.count}"; next) unless prices.count > @lt_period
       st_ror = calc_return(prices,@st_period)
@@ -52,20 +51,25 @@ puts "tkr=#{tkr}"
   end
 
   def run(params)
-    today = params.fetch(:asof) { DateTimeHelper::integer_date }
+    @today = params.fetch(:asof) { DateTimeHelper::integer_date }
 
-puts "today=#{today}"
     YahooProxy.rm_empty_price_files
 
-    blended_rors = generate_rors(today)
-puts "blended_rors=#{blended_rors}"
+    blended_rors = generate_rors(@today)
+        ##puts "blended_rors=#{blended_rors}"
 
     ranked = rank(blended_rors)
 
     top_rors = ranked[0...@num]
 
-    trades = ma_filter(top_rors)
-    print_report(trades)
+    trades = ma_filter(@today,top_rors)
+    target_pos = position_size(trades)
+    #print_report(@today,target_pos)
+    target_pos
+  end
+
+  def get_asof
+    @today
   end
 
   def create_price_file(tkr)
@@ -91,18 +95,20 @@ puts "blended_rors=#{blended_rors}"
 
   def load_prices(tkr,period,today=99999999)
     return load_price_file(price_file(tkr),today) if File.exists?(price_file(tkr))
-    dts = load_price_file(create_price_file(tkr),today)
-    puts dts
-    dts
+    load_price_file(create_price_file(tkr),today)
   end
 
   def load_price_file(fn,today=99999999)
+    prices = []
+    daycnt = 0
     File.readlines(fn).map { |rec|
       next unless rec.split(",")[0] < today
       #d,o,h,l,c,v,adj = rec.split(",")
       #c.to_f
-      rec.split(",")[4].to_f
+      prices << rec.split(",")[4].to_f
+      daycnt += 1
     }
+    prices
   end
 
   def price_file(tkr)
@@ -113,11 +119,12 @@ puts "blended_rors=#{blended_rors}"
     (h.sort_by &:last).reverse
   end
 
-  def ma_filter(top_n)
-    top_n.map { |tkr,ror| ma_signal?(tkr) ? tkr : @cash }
+  def ma_filter(today,top_n)
+    filtered = top_n.map { |tkr,ror| ma_signal?(today,tkr) ? tkr : @cash }
+    filtered
   end
 
-  def ma_signal?(tkr)
+  def ma_signal?(today,tkr)
     prices = load_prices(tkr, @ma_period,today)
     prices.last > calc_sma(prices,@ma_period)
   end
@@ -125,13 +132,21 @@ puts "blended_rors=#{blended_rors}"
   def calc_sma(values,period)
     values[0...period].reduce( :+ ) / period end
 
-  def print_report(trades)
+  def position_size(trades)
     pos_percent = 100.0 / @num
     cash_amt    = 0
-    trades.each do |tkr|
-      (tkr == @cash) ? cash_amt += pos_percent : print_trade(tkr,pos_percent)
+    target = {}
+    target.default = 0
+    trades.each_with_index do |tkr,idx|
+      target[tkr] += pos_percent
+      #(tkr == @cash) ? cash_amt += pos_percent : print_trade(tkr,pos_percent)
     end
-    print_trade(@cash,pos_percent) if cash_amt > 0
+    target
+  end
+
+  def print_report(today,positions)
+    puts "Target positions, asof #{today}"
+    positions.each { |tkr,pos_percent| print_trade(tkr,pos_percent) }
   end
 
   def print_trade(tkr,pos_percent)

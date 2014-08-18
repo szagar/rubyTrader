@@ -27,8 +27,11 @@ class BackTester
   end
 
   def run
+    @tickers.each { |tkr| @strategy.add_ticker(tkr) }
     @rebalance_dates.each do |asof|
-      @strategy.run(asof: asof)
+      target_pos = @strategy.run(asof: asof)
+      today = @strategy.get_asof
+      rebalance2target(today,target_pos)
     end
   end  
 
@@ -37,6 +40,30 @@ class BackTester
   end
 
   private
+
+  def rebalance2target(today,target_pos)
+    positions.each do |tkr,qty|
+      new_size = target.fetch(tkr) { 0 }
+      buy(tkr,new_size-qty,price) if new_size > qty
+      sell(tkr,qty-new_size),price if qty > new_size
+    end
+    target_pos.each do |tkr,qty|
+      buy(tkr,qty,price) unless positions.has_key?(tkr)
+    end
+  end
+
+  def price(tkr,date)
+    prices["#{tkr}:#{date}"
+  end
+
+  def buy(tkr,qty,price)
+    positions[tkr][:avg_px] = qty
+    positions[tkr][:qty] += qty
+  end
+
+  def sell(tkr,qty,price)
+    positions[tkr][:qty] -= qty
+  end
 
 =begin
   def load_price_data
@@ -60,8 +87,10 @@ class BackTester
   def determine_rebalance_dates
     dates = case @rebalance_pd_method
     when "eom"
-      eom_dates(@rebalance_pd)
+      eom_dates(@rebalance_pd).reverse
     end 
+puts "dates=#{dates}"
+    dates
   end
 
   def eom_dates(offset=0)
@@ -86,7 +115,7 @@ class BackTester
       end
       prev_m = m
     end
-    dates
+    dates[0..10]
   end
 
   def load_dates
