@@ -44,16 +44,35 @@ class BackTester
   def rebalance2target(today,target_pos)
     positions.each do |tkr,qty|
       new_size = target.fetch(tkr) { 0 }
-      buy(tkr,new_size-qty,price) if new_size > qty
-      sell(tkr,qty-new_size),price if qty > new_size
+      buy(tkr,new_size-qty,price(tkr,today)) if new_size > qty
+      sell(tkr,qty-new_size,price(tkr,today)) if qty > new_size
     end
     target_pos.each do |tkr,qty|
-      buy(tkr,qty,price) unless positions.has_key?(tkr)
+      buy(tkr,qty,price(tkr,today)) unless positions.has_key?(tkr)
     end
   end
 
   def price(tkr,date)
-    prices["#{tkr}:#{date}"
+    prices[tkr][date] || load_prices(tkr)[date]
+  end
+
+  def load_prices(tkr)
+    if File.exists?(price_file(tkr))
+      @prices[tkr] = load_price_file(price_file(tkr))
+    else
+      @prices[tkr] = load_price_file(create_price_file(tkr))
+    end
+    @prices[tkr]
+  end
+
+  def load_price_file(fn,today=99999999)
+    prices = {}
+    File.readlines(fn).map { |rec|
+      next unless rec.split(",")[0] < today
+      d,o,h,l,c,v,adj = rec.split(",")
+      prices[d] = c.to_f
+    }
+    prices
   end
 
   def buy(tkr,qty,price)
