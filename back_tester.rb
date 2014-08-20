@@ -3,11 +3,14 @@ class BackTester
     @strategy = strategy
     @date_ptr = 0
     @tickers = []
+    @positions = {}
+    @prices = {}
     @price_data = {}
+    @pnl = {profit: 0, drawdown: 0}
   end
 
   def reset(today,amount)
-    @balance = amount
+    @equity = amount
     @rebalance_dates = determine_rebalance_dates
     #load_price_data
   end
@@ -29,9 +32,13 @@ class BackTester
   def run
     @tickers.each { |tkr| @strategy.add_ticker(tkr) }
     @rebalance_dates.each do |asof|
+      @positions['SHY'] = {}
+      @positions['SHY'][:qty] = @equity / price('SHY',asof)
+      @positions['SHY'][:avg_px] = price('SHY',asof)
       target_pos = @strategy.run(asof: asof)
       today = @strategy.get_asof
       rebalance2target(today,target_pos)
+puts "======> #{@pnl}"
     end
   end  
 
@@ -42,21 +49,40 @@ class BackTester
   private
 
   def rebalance2target(today,target_pos)
-    positions.each do |tkr,qty|
-      new_size = target.fetch(tkr) { 0 }
-      buy(tkr,new_size-qty,price(tkr,today)) if new_size > qty
-      sell(tkr,qty-new_size,price(tkr,today)) if qty > new_size
+    puts "def rebalance2target(#{today},#{target_pos})"
+    @equity = 0
+    @positions.each do |tkr,h|
+      puts "#{@equity} += (#{h[:qty]} * #{price(tkr,today)})"
+      @equity += (h[:qty] * price(tkr,today))
     end
-    target_pos.each do |tkr,qty|
-      buy(tkr,qty,price(tkr,today)) unless positions.has_key?(tkr)
+    @positions.each do |tkr,h|
+      dollars = target_pos.fetch(tkr) { 0 } / 100 * @equity
+      px = price(tkr,today)
+      new_size = (dollars / px).to_i
+      puts "buy(#{tkr},#{new_size-h[:qty]},#{px}) if #{new_size} > #{h[:qty]}" if new_size > h[:qty]
+      buy(tkr,new_size-h[:qty],px) if new_size > h[:qty]
+      puts "sell(#{tkr},#{h[:qty]-new_size},#{px}) if #{h[:qty]} > #{new_size}" if h[:qty] > new_size
+      sell(tkr,h[:qty]-new_size,px) if h[:qty] > new_size
+    end
+    target_pos.each do |tkr,perc|
+      px = price(tkr,today)
+      dollars = perc / 100 * @equity
+      qty = (dollars / px).to_i
+puts "px: #{px}, dollars: #{dollars}, qty: #{qty}"
+      puts "buy(#{tkr},#{qty},#{px}) unless @positions.has_key?(#{tkr})"
+      buy(tkr,qty,px) unless @positions.has_key?(tkr)
     end
   end
 
   def price(tkr,date)
-    prices[tkr][date] || load_prices(tkr)[date]
+    rtn = @prices.fetch(tkr) { @prices[tkr] = Hash.new }
+    rtn.fetch(date) { @prices[tkr] = load_prices(tkr) } 
+    #(@prices[tkr] && @prices[tkr][date]) ? @prices[tkr][date] : load_prices(tkr)[date]
+    @prices[tkr][date]
   end
 
   def load_prices(tkr)
+    puts "def load_prices(#{tkr})"
     if File.exists?(price_file(tkr))
       @prices[tkr] = load_price_file(price_file(tkr))
     else
@@ -65,10 +91,17 @@ class BackTester
     @prices[tkr]
   end
 
+  def price_file(tkr)
+    "prices/#{tkr}_yahoo.data"
+  end
+
+  def create_price_file(tkr)
+    YahooProxy.create_price_file(tkr)
+  end
   def load_price_file(fn,today=99999999)
     prices = {}
     File.readlines(fn).map { |rec|
-      next unless rec.split(",")[0] < today
+      next unless rec.split(",")[0].to_i < today
       d,o,h,l,c,v,adj = rec.split(",")
       prices[d] = c.to_f
     }
@@ -76,12 +109,19 @@ class BackTester
   end
 
   def buy(tkr,qty,price)
-    positions[tkr][:avg_px] = qty
-    positions[tkr][:qty] += qty
+    puts "def buy(#{tkr},#{qty},#{price})"
+    @positions.fetch(tkr) { @positions[tkr] = {avg_px: 0.0, qty: 0 } }
+    @positions[tkr][:avg_px] = (@positions[tkr][:avg_px]*@positions[tkr][:qty]
+                                + qty*price ) /
+                                (@positions[tkr][:qty] + qty)
+    @positions[tkr][:qty] += qty
   end
 
   def sell(tkr,qty,price)
-    positions[tkr][:qty] -= qty
+    puts "@pnl[:profit] += (#{@positions[tkr][:qty]} * #{@positions[tkr][:avg_px]}) - (#{qty} * #{price})"
+    @pnl[:profit] += (@positions[tkr][:avg_px] - price) * qty
+    @pnl[:drawdown] = @pnl[:profit] if @pnl[:profit] < @pnl[:drawdown]
+    @positions[tkr][:qty] -= qty
   end
 
 =begin
