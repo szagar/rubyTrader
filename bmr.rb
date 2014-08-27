@@ -130,15 +130,15 @@ class BMR
   end
 
   def position_size(trades)
-    pos_percent    = 100.0 / @num
+    pos_percent    = (100.0 / @num).round(1)
     target         = {}
     target.default = 0
     target[@cash]  = 100.0
     trades.each_with_index do |tkr,idx|
       target[tkr] += pos_percent
       target[@cash] -= pos_percent
-      #(tkr == @cash) ? cash_amt += pos_percent : print_trade(tkr,pos_percent)
     end
+    puts "target=#{target}"
     target
   end
 

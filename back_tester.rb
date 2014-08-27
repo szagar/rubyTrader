@@ -40,9 +40,9 @@ class BackTester
   def run
     @tickers.each { |tkr| @strategy.add_ticker(tkr) }
     @positions['SHY'] = {}
-    puts "@positions['SHY'][:qty] = #{@equity} / price('SHY',#{@rebalance_dates[0]})"
     @positions['SHY'][:qty] = @equity / price('SHY',@rebalance_dates[0])
     @positions['SHY'][:avg_px] = price('SHY',@rebalance_dates[0])
+    puts "@positions['SHY'] = #{@positions['SHY']}"
     @rebalance_dates.each do |asof|
       target_pos = @strategy.run(asof: asof)
       today = @strategy.get_asof
@@ -96,7 +96,7 @@ puts "======> #{@pnl}"
   def buy(asof,tkr,qty,price)
     @xact_fh.write sprintf "%s,Buy,%s,%s,%s\n",asof,tkr,qty,price
     @positions.fetch(tkr) { @positions[tkr] = {avg_px: 0.0, qty: 0 } }
-    puts "AvgPx(#{asof}/#{tkr}): (#{@positions[tkr][:avg_px]}*#{@positions[tkr][:qty]} + #{qty}*#{price} ) / (#{@positions[tkr][:qty]} + #{qty})"
+    puts "AvgPx(#{asof}/#{tkr}): (#{@positions[tkr][:avg_px]}*#{@positions[tkr][:qty]} + #{price}*#{qty} ) / (#{@positions[tkr][:qty]} + #{qty})"
     @positions[tkr][:avg_px] = (@positions[tkr][:avg_px]*@positions[tkr][:qty]
                                 + qty*price ) /
                                 (@positions[tkr][:qty] + qty)
