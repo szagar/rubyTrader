@@ -12,7 +12,7 @@ bmr.set_ma_signal_period(88)
 
 bt = BackTester.new(bmr)
 symbol_file = ARGV.shift
-File.open(symbol_file).each { |tkr| bt.add_ticker(tkr.chomp) }
+File.open(symbol_file).each { |tkr| bt.add_ticker(tkr.chomp.rstrip) }
 today = DateTimeHelper::integer_date
 bt.rebalance_period("eom",3)
 bt.reset(today,100_000)

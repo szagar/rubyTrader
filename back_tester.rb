@@ -1,3 +1,7 @@
+require "../zts/lib2/historical_prices"
+
+#Env = "test"
+
 class BackTester
   def initialize(strategy)
     @strategy = strategy
@@ -7,12 +11,16 @@ class BackTester
     @prices = {}
     @price_data = {}
     @pnl = {profit: 0, drawdown: 0}
+
+    @xact_fh = File.open("xact.csv", 'w')
+    @xact_fh.write "tkr,qty,price\n"
+    env = Env
+    @hp = HistoricalPrices.new(env)
   end
 
   def reset(today,amount)
     @equity = amount
     @rebalance_dates = determine_rebalance_dates
-    #load_price_data
   end
 
   def rebalance_period(type,offset)
@@ -31,10 +39,11 @@ class BackTester
 
   def run
     @tickers.each { |tkr| @strategy.add_ticker(tkr) }
+    @positions['SHY'] = {}
+    puts "@positions['SHY'][:qty] = #{@equity} / price('SHY',#{@rebalance_dates[0]})"
+    @positions['SHY'][:qty] = @equity / price('SHY',@rebalance_dates[0])
+    @positions['SHY'][:avg_px] = price('SHY',@rebalance_dates[0])
     @rebalance_dates.each do |asof|
-      @positions['SHY'] = {}
-      @positions['SHY'][:qty] = @equity / price('SHY',asof)
-      @positions['SHY'][:avg_px] = price('SHY',asof)
       target_pos = @strategy.run(asof: asof)
       today = @strategy.get_asof
       rebalance2target(today,target_pos)
@@ -48,107 +57,65 @@ puts "======> #{@pnl}"
 
   private
 
-  def rebalance2target(today,target_pos)
-    puts "def rebalance2target(#{today},#{target_pos})"
-    @equity = 0
-    @positions.each do |tkr,h|
-      puts "#{@equity} += (#{h[:qty]} * #{price(tkr,today)})"
-      @equity += (h[:qty] * price(tkr,today))
-    end
+  def rebalance2target(asof,target_pos)
+    puts "def rebalance2target(#{asof},#{target_pos})"
+    prev_equity = @equity
+    puts "@positions=#{@positions}"
+    @equity = @positions.map{|tkr,h| h[:qty] * price(tkr,asof)}.reduce(:+).round(2)
+    @dd = [@dd||0,@equity-prev_equity].min
+    puts "BackTester#rebalance2target: @equity #{asof} =#{@equity.round(0)}  drawdown=#{@dd.round(0)}"
     @positions.each do |tkr,h|
       dollars = target_pos.fetch(tkr) { 0 } / 100 * @equity
-      px = price(tkr,today)
+      px = price(tkr,asof)
       new_size = (dollars / px).to_i
-      puts "buy(#{tkr},#{new_size-h[:qty]},#{px}) if #{new_size} > #{h[:qty]}" if new_size > h[:qty]
-      buy(tkr,new_size-h[:qty],px) if new_size > h[:qty]
-      puts "sell(#{tkr},#{h[:qty]-new_size},#{px}) if #{h[:qty]} > #{new_size}" if h[:qty] > new_size
-      sell(tkr,h[:qty]-new_size,px) if h[:qty] > new_size
+      puts "buy(#{asof},#{tkr},#{new_size-h[:qty]},#{px}) :: adj pos" if new_size > h[:qty]
+      buy(asof,tkr,new_size-h[:qty],px) if new_size > h[:qty]
+      puts "sell(#{asof},#{tkr},#{h[:qty]-new_size},#{px}) :: adj pos" if h[:qty] > new_size
+      sell(asof,tkr,h[:qty]-new_size,px) if h[:qty] > new_size
     end
     target_pos.each do |tkr,perc|
-      px = price(tkr,today)
+      px = price(tkr,asof)
       dollars = perc / 100 * @equity
       qty = (dollars / px).to_i
-puts "px: #{px}, dollars: #{dollars}, qty: #{qty}"
-      puts "buy(#{tkr},#{qty},#{px}) unless @positions.has_key?(#{tkr})"
-      buy(tkr,qty,px) unless @positions.has_key?(tkr)
+      puts "buy(#{asof},#{tkr},#{qty},#{px}) :: to target" unless @positions.has_key?(tkr)
+      buy(asof,tkr,qty,px) unless @positions.has_key?(tkr)
     end
   end
 
   def price(tkr,date)
+    #puts "def price(#{tkr},#{date})"
     rtn = @prices.fetch(tkr) { @prices[tkr] = Hash.new }
-    rtn.fetch(date) { @prices[tkr] = load_prices(tkr) } 
-    #(@prices[tkr] && @prices[tkr][date]) ? @prices[tkr][date] : load_prices(tkr)[date]
-    @prices[tkr][date]
+    rtn.fetch(date) { @prices[tkr] = load_prices(tkr,date) } 
+    @prices[tkr][date][:c]
   end
 
-  def load_prices(tkr)
-    puts "def load_prices(#{tkr})"
-    if File.exists?(price_file(tkr))
-      @prices[tkr] = load_price_file(price_file(tkr))
-    else
-      @prices[tkr] = load_price_file(create_price_file(tkr))
-    end
-    @prices[tkr]
+  def load_prices(tkr,asof)
+    @prices[tkr] = @hp.price_hash(tkr,5,asof)
   end
 
-  def price_file(tkr)
-    "prices/#{tkr}_yahoo.data"
-  end
-
-  def create_price_file(tkr)
-    YahooProxy.create_price_file(tkr)
-  end
-  def load_price_file(fn,today=99999999)
-    prices = {}
-    File.readlines(fn).map { |rec|
-      next unless rec.split(",")[0].to_i < today
-      d,o,h,l,c,v,adj = rec.split(",")
-      prices[d] = c.to_f
-    }
-    prices
-  end
-
-  def buy(tkr,qty,price)
-    puts "def buy(#{tkr},#{qty},#{price})"
+  def buy(asof,tkr,qty,price)
+    @xact_fh.write sprintf "%s,Buy,%s,%s,%s\n",asof,tkr,qty,price
     @positions.fetch(tkr) { @positions[tkr] = {avg_px: 0.0, qty: 0 } }
+    puts "AvgPx(#{asof}/#{tkr}): (#{@positions[tkr][:avg_px]}*#{@positions[tkr][:qty]} + #{qty}*#{price} ) / (#{@positions[tkr][:qty]} + #{qty})"
     @positions[tkr][:avg_px] = (@positions[tkr][:avg_px]*@positions[tkr][:qty]
                                 + qty*price ) /
                                 (@positions[tkr][:qty] + qty)
     @positions[tkr][:qty] += qty
   end
 
-  def sell(tkr,qty,price)
-    puts "@pnl[:profit] += (#{@positions[tkr][:qty]} * #{@positions[tkr][:avg_px]}) - (#{qty} * #{price})"
-    @pnl[:profit] += (@positions[tkr][:avg_px] - price) * qty
+  def sell(asof,tkr,qty,price)
+    @xact_fh.write sprintf "%s,Sell,%s,%s,%s\n",asof,tkr,qty,price
+    puts "Profit(#{asof}/#{tkr}): #{@pnl[:profit]} += (#{price} - #{@positions[tkr][:avg_px]}) * #{qty}"
+    @pnl[:profit] += (price - @positions[tkr][:avg_px]) * qty
     @pnl[:drawdown] = @pnl[:profit] if @pnl[:profit] < @pnl[:drawdown]
     @positions[tkr][:qty] -= qty
   end
-
-=begin
-  def load_price_data
-    rebalance_dates = determine_rebalance_dates
-    @tickers.each do |tkr|
-      @price_data[tkr] = load_price_for_dates(tkr,rebalance_dates)
-    end
-  end
-=end
-
-=begin
-  def load_price_for_dates(tkr,rebalance_dates)
-    #  [rebalance_date] = close
-    #  [rebalance_date] = close
-    # 
-    # 
-    dates = YahooProxy.historical_eod(tkr,10).map { |p| p.split(",")[0] }
-  end
-=end
 
   def determine_rebalance_dates
     dates = case @rebalance_pd_method
     when "eom"
       eom_dates(@rebalance_pd).reverse
     end 
-puts "dates=#{dates}"
     dates
   end
 
@@ -157,7 +124,7 @@ puts "dates=#{dates}"
     prev_m = 0
     off_set_cnt = 0
     load_dates.each do |dt|
-      m = dt[/\d\d\d\d(\d\d)\d\d/,1]
+      m = dt.to_s[/\d\d\d\d(\d\d)\d\d/,1]
       if prev_m == 0
         prev_m = m
         next
@@ -174,11 +141,11 @@ puts "dates=#{dates}"
       end
       prev_m = m
     end
-    dates[0..10]
+    dates[0..20]
   end
 
   def load_dates
-    dates = YahooProxy.historical_eod("IBM",10).map { |p| p.split(",")[0] }
+    @hp.dates_array.reverse
   end
 
   def increment_asof(asof)

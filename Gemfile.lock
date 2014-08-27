@@ -3,10 +3,12 @@ GEM
   specs:
     coderay (1.1.0)
     method_source (0.8.2)
+    pg (0.17.1)
     pry (0.10.1)
       coderay (~> 1.1.0)
       method_source (~> 0.8.1)
       slop (~> 3.4)
+    sequel (4.13.0)
     slop (3.6.0)
     yahoo-finance (0.0.2)
 
@@ -14,5 +16,7 @@ PLATFORMS
   ruby
 
 DEPENDENCIES
+  pg
   pry
+  sequel
   yahoo-finance
