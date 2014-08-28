@@ -1,1 +1,0 @@
-/Users/szagar/zts/lib2/yahoo_proxy.rb
