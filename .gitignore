@@ -1,7 +1,9 @@
 prices/**
 *.gem
 *.out
+*.out.*
 *.csv
+*.csv.*
 *.rbc
 /.config
 /coverage/

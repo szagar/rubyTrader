@@ -17,7 +17,9 @@ class BackTester
     @bt_start_dt = 0
 
     @rpt_fh  = File.open("report.csv", 'w')
+    @rpt_fh.sync = true
     @xact_fh = File.open("xact.csv", 'w')
+    @xact_fh.sync = true
     @xact_fh.write "tkr,qty,price\n"
     env = Env
     @hp = HistoricalPrices.new(env)
@@ -29,7 +31,12 @@ class BackTester
 
   def reset(today,amount)
     @equity = amount
+    @pnl = {profit: 0, drawdown: 0}
     @rebalance_dates = determine_rebalance_dates
+    @positions = {}
+    @positions['SHY'] = {}
+    @positions['SHY'][:qty] = @equity / price('SHY',@rebalance_dates[0])
+    @positions['SHY'][:avg_px] = price('SHY',@rebalance_dates[0])
   end
 
   def rebalance_period(type,offset)
@@ -44,15 +51,11 @@ class BackTester
   end
 
   def add_ticker(tkr)
-    @tickers << tkr
+    @tickers << tkr if tkr_qualifies?(tkr)
   end
 
   def run
     @tickers.each { |tkr| @strategy.add_ticker(tkr) }
-    @positions['SHY'] = {}
-    @positions['SHY'][:qty] = @equity / price('SHY',@rebalance_dates[0])
-    @positions['SHY'][:avg_px] = price('SHY',@rebalance_dates[0])
-    puts "@positions['SHY'] = #{@positions['SHY']}"
     @rebalance_dates.each do |asof|
       target_pos = @strategy.run(asof: asof)
       today = @strategy.get_asof
@@ -70,6 +73,10 @@ puts "======> #{@pnl}"
   end
 
   private
+
+  def tkr_qualifies?(tkr)
+   volume(tkr) > 100_000 
+  end
 
   def rebalance2target(asof,target_pos)
     puts "def rebalance2target(#{asof},#{target_pos})"
@@ -101,6 +108,20 @@ puts "======> #{@pnl}"
     rtn = @prices.fetch(tkr) { @prices[tkr] = Hash.new }
     rtn.fetch(date) { @prices[tkr] = load_prices(tkr,date) } 
     @prices[tkr][date][:c]
+  end
+
+  def volume(tkr,date=false)
+    puts "volume(#{tkr},#{date})"
+    @vdate = date if date
+    @vdate || @vdate = load_dates[0]
+puts "@vdate=#{vdate}"
+    rtn = @prices.fetch(tkr) { @prices[tkr] = Hash.new }
+    rtn.fetch(date) { @prices[tkr] = load_prices(tkr,date) } 
+    v = @prices[tkr][date][:v]
+    puts "volume for #{tkr} is #{v}"
+    v
+  rescue
+    0
   end
 
   def load_prices(tkr,asof)
@@ -155,12 +176,7 @@ puts "======> #{@pnl}"
   end
 
   def load_dates(start_dt=20140000)
-    #@hp.dates_array.reverse
-    #raw = @hp.dates_array
-    #raw = raw.select { |dt| dt > start_dt }
-    #raw.reverse
     @hp.dates_array.select { |dt| dt > start_dt }.reverse
-    #raw.reverse
   end
 
   def increment_asof(asof)

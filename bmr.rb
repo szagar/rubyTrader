@@ -83,11 +83,11 @@ class BMR
   end
 
   def report_hdr
-    "ma_pd,lt_pd,sh_pd"
+    "num,ma_pd,lt_pd,sh_pd"
   end
 
   def report_desc
-    [@ma_period,@lt_period,@st_period].join ","
+    [@num,@ma_period,@lt_period,@st_period].join ","
   end
 
   private
