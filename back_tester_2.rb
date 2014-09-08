@@ -6,6 +6,7 @@ class BackTester
   attr_reader :strategy
 
   def initialize(strategy)
+    puts "BackTester new"
     @strategy = strategy
     @date_ptr = 0
     @tickers = []
@@ -26,28 +27,18 @@ class BackTester
   end
 
   def set_bt_start_dt(dt)
+    puts "set_bt_start_dt(#{dt})"
     @bt_start_dt = dt
   end
 
   def reset(today,amount)
+    puts "reset(#{today},#{amount})"
     @equity = amount
     @pnl = {profit: 0, drawdown: 0}
-    @rebalance_dates = determine_rebalance_dates
     @positions = {}
-    @positions['SHY'] = {}
-    @positions['SHY'][:qty] = @equity / price('SHY',@rebalance_dates[0])
-    @positions['SHY'][:avg_px] = price('SHY',@rebalance_dates[0])
-  end
-
-  def rebalance_period(type,offset)
-    @rebalance_str = "#{offset}#{type}"
-    case type
-    when "daycnt"
-      @rebalance_daycnt    = pd2daycnt(offset)
-    when "eom"
-      @rebalance_pd_method = type
-      @rebalance_pd        = offset
-    end
+    #@positions['SHY'] = {}
+    #@positions['SHY'][:qty] = @equity / price('SHY',@rebalance_dates[0])
+    #@positions['SHY'][:avg_px] = price('SHY',@rebalance_dates[0])
   end
 
   def add_ticker(tkr)
@@ -56,7 +47,7 @@ class BackTester
 
   def run
     @tickers.each { |tkr| @strategy.add_ticker(tkr) }
-    @rebalance_dates.each do |asof|
+    load_dates.each do |asof|
       target_pos = @strategy.run(asof: asof)
       today = @strategy.get_asof
       rebalance2target(today,target_pos)
@@ -75,13 +66,13 @@ puts "======> #{@pnl}"
   private
 
   def tkr_qualifies?(tkr)
-   @hp.volume(tkr) > 100_000 
+   volume(tkr) > 100_000 
   end
 
   def rebalance2target(asof,target_pos)
     puts "def rebalance2target(#{asof},#{target_pos})"
     prev_equity = @equity
-    #puts "rebalance2target: @positions=#{@positions}"
+    puts "rebalance2target: @positions=#{@positions}"
     @equity = @positions.map{|tkr,h| h[:qty] * price(tkr,asof)}.reduce(:+).round(2)
     @dd = [@dd||0,@equity-prev_equity].min
     puts "BackTester#rebalance2target: @equity #{asof} =#{@equity.round(0)}  drawdown=#{@dd.round(0)}"
@@ -110,21 +101,19 @@ puts "======> #{@pnl}"
     @prices[tkr][date][:c]
   end
 
-=begin
   def volume(tkr,date=false)
     puts "volume(#{tkr},#{date})"
     @vdate = date if date
     @vdate || @vdate = load_dates[0]
 puts "@vdate=#{vdate}"
     rtn = @prices.fetch(tkr) { @prices[tkr] = Hash.new }
-    rtn.fetch(vdate) { @prices[tkr] = load_prices(tkr,vdate) } 
-    v = @prices[tkr][vdate][:v]
+    rtn.fetch(date) { @prices[tkr] = load_prices(tkr,date) } 
+    v = @prices[tkr][date][:v]
     puts "volume for #{tkr} is #{v}"
     v
   rescue
     0
   end
-=end
 
   def load_prices(tkr,asof)
     @prices[tkr] = @hp.price_hash(tkr,5,asof)
@@ -144,44 +133,12 @@ puts "@vdate=#{vdate}"
     @positions[tkr][:qty] -= qty
   end
 
-  def determine_rebalance_dates
-    puts "determine_rebalance_dates"
-    puts "@rebalance_pd_method=#{@rebalance_pd_method}"
-    dates = case @rebalance_pd_method
-    when "eom"
-      eom_dates(@rebalance_pd).reverse
-    end 
-    dates
-  end
-
-  def eom_dates(offset=0)
-    dates = []
-    prev_m = 0
-    off_set_cnt = 0
-    load_dates(@bt_start_dt).each do |dt|
-      m = dt.to_s[/\d\d\d\d(\d\d)\d\d/,1]
-      if prev_m == 0
-        prev_m = m
-        next
-      end
-      if m != prev_m
-        off_set_cnt = offset
-      end
-      if m == prev_m
-        off_set_cnt -= 1
-      end
-      if off_set_cnt == 0
-        dates << dt
-        off_set_cnt = 999999
-      end
-      prev_m = m
-    end
-    dates[0..20]
-  end
-
-  def load_dates(start_dt=20140001)
+  def load_dates(start_dt=20140000)
+    puts "load_dates(#{start_dt})"
     #@hp.dates_array.select { |dt| dt > start_dt }.reverse
-    @hp.dates_array.select { |dt| dt > start_dt }.reverse
+    dates = @hp.dates_array
+puts "dates=#{dates}"
+    dates.select { |dt| dt > start_dt }.reverse
   end
 
   def increment_asof(asof)

@@ -43,26 +43,12 @@ class BMR
     @ma_period = pd
   end
 
-  def generate_rors(asof)
-    blended_rors = {}
-    @tickers.map do |tkr|
-      prices = load_prices(tkr,@lt_period+1,asof)  #desc [0] is asof
-      (puts "skip tkr #{tkr}/#{prices.count}"; next) unless prices.count > @lt_period
-      st_ror = calc_return(prices,@st_period)
-      lt_ror = calc_return(prices,@lt_period)
-      blended_rors[tkr] = calc_blended_ror(st_ror,lt_ror)
-      puts "Returns(#{tkr},#{@today}): #{st_ror.round(2)}/#{lt_ror.round(2)} = #{blended_rors[tkr].round(2)}"
-    end
-    blended_rors
-  end
-
   def run(params)
-    @today = params.fetch(:asof) #{ DateTimeHelper::integer_date }
+    @today = params.fetch(:asof) { DateTimeHelper::integer_date }
 
     YahooProxy.rm_empty_price_files
 
     blended_rors = generate_rors(@today)
-        ##puts "blended_rors=#{blended_rors}"
 
     ranked = rank(blended_rors)
 
@@ -78,10 +64,6 @@ class BMR
     @today
   end
 
-  def create_price_file(tkr)
-    YahooProxy.create_price_file(tkr)
-  end
-
   def report_hdr
     "num,ma_pd,lt_pd,sh_pd"
   end
@@ -91,6 +73,19 @@ class BMR
   end
 
   private
+
+  def generate_rors(asof)
+    blended_rors = {}
+    @tickers.map do |tkr|
+      prices = load_prices(tkr,@lt_period+1,asof)  #desc [0] is asof
+      (puts "skip tkr #{tkr}/#{prices.count}"; next) unless prices.count > @lt_period
+      st_ror = calc_return(prices,@st_period)
+      lt_ror = calc_return(prices,@lt_period)
+      blended_rors[tkr] = calc_blended_ror(st_ror,lt_ror)
+      puts "Returns(#{tkr},#{@today}): #{st_ror.round(2)}/#{lt_ror.round(2)} = #{blended_rors[tkr].round(2)}"
+    end
+    blended_rors
+  end
 
   def calc_blended_ror(st_ror,lt_ror)
       @st_wt * st_ror + (1.0-@st_wt) * lt_ror
