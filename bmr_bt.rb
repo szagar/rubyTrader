@@ -23,8 +23,8 @@ bt.report_hdr
       (66...88).step(22) do |st_pd|
         (st_pd+66..st_pd+88).step(66) do |lt_pd|
           bt.rebalance_period("eom",months)
-          bt.set_bt_start_dt(20070000)
-          bt.reset(today,100_000)
+          bt.set_bt_start_dt(20070101)
+          bt.reset(100_000)
           bt.strategy.set_num_positions(num)
           bt.strategy.set_ma_signal_period(ma_pd)  # 88
           bt.strategy.set_short_term_period(st_pd)
