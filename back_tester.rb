@@ -20,7 +20,7 @@ class BackTester
     @rpt_fh.sync = true
     @xact_fh = File.open("xact.csv", 'w')
     @xact_fh.sync = true
-    @xact_fh.write "tkr,qty,price\n"
+    @xact_fh.write "descr,tkr,qty,price\n"
     env = Env
     @hp = HistoricalPrices.new(env)
   end
@@ -56,8 +56,12 @@ class BackTester
 
   def run
     @tickers.each { |tkr| @strategy.add_ticker(tkr) }
+    puts "rebalance_dates = #{@rebalance_dates}"
     @rebalance_dates.each do |asof|
       target_pos = @strategy.run(asof: asof)
+      printf "PnL:%s %7.0f / %7.0f  targetPos: ",@strategy.report_desc,@pnl[:profit],@pnl[:drawdown]
+      target_pos.each { |k,v| printf "%5s: %5.2f%%",k,target_pos[k] }
+      printf "\n"
       today = @strategy.get_asof
       rebalance2target(today,target_pos)
 puts "======> #{@pnl}"
@@ -131,14 +135,14 @@ puts "@vdate=#{vdate}"
   end
 
   def buy(asof,tkr,qty,price)
-    @xact_fh.write sprintf "%s,Buy,%s,%s,%s\n",asof,tkr,qty,price
+    @xact_fh.write sprintf "%s,%s,Buy,%s,%s,%s\n",@strategy.descr,asof,tkr,qty,price
     @positions.fetch(tkr) { @positions[tkr] = {avg_px: 0.0, qty: 0 } }
     @positions[tkr][:avg_px] = (@positions[tkr][:avg_px]*@positions[tkr][:qty] + qty*price ) / (@positions[tkr][:qty] + qty)
     @positions[tkr][:qty] += qty
   end
 
   def sell(asof,tkr,qty,price)
-    @xact_fh.write sprintf "%s,Sell,%s,%s,%s\n",asof,tkr,qty,price
+    @xact_fh.write sprintf "%s,%s,Sell,%s,%s,%s\n",@strategy.descr,asof,tkr,qty,price
     @pnl[:profit] += (price - @positions[tkr][:avg_px]) * qty
     @pnl[:drawdown] = @pnl[:profit] if @pnl[:profit] < @pnl[:drawdown]
     @positions[tkr][:qty] -= qty
@@ -155,9 +159,11 @@ puts "@vdate=#{vdate}"
   end
 
   def eom_dates(offset=0)
+    puts "eom_dates(offset=#{offset})"
     dates = []
     prev_m = 0
     off_set_cnt = 0
+    puts "eom_dates: @bt_start_dt=#{@bt_start_dt}"
     load_dates(@bt_start_dt).each do |dt|
       m = dt.to_s[/\d\d\d\d(\d\d)\d\d/,1]
       if prev_m == 0

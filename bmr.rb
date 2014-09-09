@@ -19,6 +19,10 @@ class BMR
     @blended_ror = {}
   end
 
+  def descr
+    "#{@ma_period}:#{@cash}:#{@num}:#{@st_period}:#{@lt_period}"
+  end
+
   def add_ticker(tkr)
     @tickers << tkr
   end
@@ -82,7 +86,7 @@ class BMR
       st_ror = calc_return(prices,@st_period)
       lt_ror = calc_return(prices,@lt_period)
       blended_rors[tkr] = calc_blended_ror(st_ror,lt_ror)
-      puts "Returns(#{tkr},#{@today}): #{st_ror.round(2)}/#{lt_ror.round(2)} = #{blended_rors[tkr].round(2)}"
+      puts "Returns(#{tkr},#{asof}): #{st_ror.round(2)}/#{lt_ror.round(2)} = #{blended_rors[tkr].round(2)}"
     end
     blended_rors
   end
@@ -139,6 +143,11 @@ class BMR
       target[tkr] += pos_percent
       target[@cash] -= pos_percent
     end
+    target.delete_if { |k,v| v < 1.0 }
+    printf "target position: "
+    target.keys.sort.each { |k| printf "%5s: %5.2f%%", k, target[k] }
+    printf "\n"
+    #printf "%5s: %5.2f%% %5s: %5.2f%% %5s: %5.2f%%\n",*target.to_a.flatten
     puts "target=#{target}"
     target
   end
