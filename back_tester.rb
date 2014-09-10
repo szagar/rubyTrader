@@ -1,4 +1,5 @@
 require "../zts/lib2/historical_prices"
+require "../zts/lib2/price_series_helper"
 require "../zts/lib2/date_time_helper"
 
 #Env = "test"
@@ -8,16 +9,19 @@ class BackTester
 
   def initialize(strategy)
     @strategy = strategy
-    @date_ptr = 0
-    @tickers = []
+    @date_ptr  = 0
+    @tickers   = []
     @positions = {}
-    @prices = {}
+    @atrs      = {}
+    @prices    = {}
     @price_data = {}
     @pnl = {peak: 0, holding_profit: 0, profit: 0, drawdown: 0}
 
     @bt_start_dt = 0
 
-    @rpt_fh  = File.open("report.csv", 'w')
+    @pos_fh  = File.open("positions.csv", 'a')
+    @pos_fh.sync = true
+    @rpt_fh  = File.open("report.csv", 'a')
     @rpt_fh.sync = true
     @xact_fh = File.open("xact.csv", 'w')
     @xact_fh.sync = true
@@ -29,31 +33,38 @@ class BackTester
   def set_bt_start_dt(dt)
     puts "def set_bt_start_dt(#{dt})"
     @bt_start_dt = load_dates(dt).last
-puts "@bt_start_dt=#{@bt_start_dt}"
   end
 
   def reset(amount)
-    @deposits = amount
+    @deposits = 0
     @pnl = {peak: 0, holding_profit: 0, profit: 0, drawdown: 0}
     @rebalance_dates = determine_rebalance_dates
     @positions = {}
-    @positions['SHY'] = {}
-    #@positions['SHY'][:qty] = amount / price('SHY',@rebalance_dates[0])
-    @positions['SHY'][:qty] = amount / price('SHY',@bt_start_dt)
-    puts "reset on #{@bt_start_dt} : #{@positions['SHY'][:qty]} at #{price('SHY',@bt_start_dt)}"
-    @positions['SHY'][:avg_px] = price('SHY',@bt_start_dt)
+    deposit(@bt_start_dt,amount)
     puts "reset: equity = #{equity(@bt_start_dt)}"
   end
 
-  def rebalance_period(type,offset)
-    @rebalance_str = "#{offset}#{type}"
+  def deposit(asof,amount)
+    @deposits += amount
+    @positions[cash_tkr] = {}
+    @positions[cash_tkr][:qty] = amount / price(cash_tkr,asof)
+    puts "reset on #{@bt_start_dt} : #{@positions[cash_tkr][:qty]} at #{price(cash_tkr,asof)}"
+    @positions[cash_tkr][:avg_px] = price(cash_tkr,asof)
+  end
+
+  def rebalance_period(type,count)
+    @rebalance_str = "#{count}#{type}"
     case type
     when "daycnt"
-      @rebalance_daycnt    = pd2daycnt(offset)
+      @rebalance_daycnt    = pd2daycnt(count)
     when "eom"
       @rebalance_pd_method = type
-      @rebalance_pd        = offset
+      @rebalance_pd        = count
     end
+  end
+
+  def eom_offset(offset)
+    @eom_offset = offset
   end
 
   def add_ticker(tkr)
@@ -92,14 +103,21 @@ puts "======> #{@pnl}"
   end  
 
   def report_hdr
-    @rpt_fh.write sprintf "%s,rebal_pd,profit,drawdown\n",@strategy.report_hdr
+    @rpt_fh.write sprintf "start_dt,%s,rebal_pd,eom_offset,profit,drawdown\n",@strategy.report_hdr
   end
 
   def report
-    @rpt_fh.write sprintf "%s,%s,%.0f,%.0f\n",@strategy.report_desc,@rebalance_str,@pnl[:profit],@pnl[:drawdown]
+    @rpt_fh.write sprintf "%d,%s,%s,%d,%.0f,%.0f\n",
+                          @bt_start_dt,@strategy.report_desc,
+                          @rebalance_str,@eom_offset,
+                          @pnl[:profit],@pnl[:drawdown]
   end
 
   private
+
+  def cash_tkr
+    @strategy.cash
+  end
 
   def tkr_qualifies?(tkr)
    @hp.volume(tkr) > 100_000 
@@ -107,7 +125,26 @@ puts "======> #{@pnl}"
 
   def check_exits(asof)
     @positions.each do |tkr,h|
+      next unless h[:qty] > 0
+      stop_loss = @positions[tkr].fetch(:exit_price) { 0 }
+      px = price(tkr,asof)
+      if px < stop_loss
+puts "Stop Loss Exit: #{tkr}  #{h}"
+        puts "sell(#{asof},#{tkr},#{h[:qty]},#{px}) :: exit" 
+        sell(asof,tkr,h[:qty],px) 
+      end
     end
+  end
+
+  def set_exit(tkr,asof)
+    atr = @atrs.fetch(tkr) { 
+      prices = @hp.price_array(tkr,14*2,asof)
+      #@atrs[tkr] = PriceSeriesHelper::set_atr(14,prices).last['atr']
+      PriceSeriesHelper::set_atr(14,prices)
+    }
+    @positions[tkr][:exit_price] = (price(tkr,asof) - 3 * atr).round(2)
+puts "atr=#{atr}"
+puts "exit=#{@positions[tkr][:exit_price]}"
   end
 
   def rebalance2target(asof,target_pos)
@@ -118,10 +155,10 @@ puts "======> #{@pnl}"
 puts "1 dollars = #{target_pos.fetch(tkr) { 0 }} / 100 * #{prev_equity}"
       dollars = target_pos.fetch(tkr) { 0 } / 100 * prev_equity
       px = price(tkr,asof)
-      new_size = (dollars / px).to_i
+      new_size = (dollars / px).to_i.round(0)
       puts "buy(#{asof},#{tkr},#{new_size-h[:qty]},#{px}) :: adj pos" if new_size > h[:qty]
       buy(asof,tkr,new_size-h[:qty],px) if new_size > h[:qty]
-      puts "sell(#{asof},#{tkr},#{h[:qty]-new_size},#{px}) :: adj pos" if h[:qty] > new_size
+      puts "rebalance2target: sell(#{asof},#{tkr},#{h[:qty]-new_size},#{px}) :: adj pos" if h[:qty] > new_size
       sell(asof,tkr,h[:qty]-new_size,px) if h[:qty] > new_size
     end
     target_pos.each do |tkr,perc|
@@ -131,7 +168,7 @@ puts "2 rebalance2target: asof= = #{asof}"
 puts "2 rebalance2target: px = #{px}"
 puts "2 dollars = #{perc} / 100 * #{prev_equity}"
       dollars = perc / 100 * prev_equity
-      qty = (dollars / px).to_i
+      qty = (dollars / px).to_i.round(0)
       puts "buy(#{asof},#{tkr},#{qty},#{px}) :: to target" unless @positions.has_key?(tkr)
       buy(asof,tkr,qty,px) unless @positions.has_key?(tkr)
     end
@@ -166,16 +203,41 @@ puts "@vdate=#{vdate}"
 
   def buy(asof,tkr,qty,price)
     @xact_fh.write sprintf "%s,%s,Buy,%s,%s,%s\n",@strategy.descr,asof,tkr,qty,price
+    withdraw_cash(asof,qty*price)
     @positions.fetch(tkr) { @positions[tkr] = {avg_px: 0.0, qty: 0 } }
-    @positions[tkr][:avg_px] = (@positions[tkr][:avg_px]*@positions[tkr][:qty] + qty*price ) / (@positions[tkr][:qty] + qty)
-    @positions[tkr][:qty] += qty
+    pre_value = @positions[tkr][:avg_px]*@positions[tkr][:qty] 
+    add_value = qty*price
+    new_qty   = @positions[tkr][:qty] + qty
+    @positions[tkr][:avg_px] = (pre_value + add_value ) / new_qty
+    @positions[tkr][:qty] = new_qty
+    set_exit(tkr,asof)
   end
 
   def sell(asof,tkr,qty,price)
+    puts "sell(#{asof},#{tkr},#{qty},#{price})"
     @xact_fh.write sprintf "%s,%s,Sell,%s,%s,%s\n",@strategy.descr,asof,tkr,qty,price
-    #@pnl[:profit] += (price - @positions[tkr][:avg_px]) * qty
-    #@pnl[:drawdown] = @pnl[:profit] if @pnl[:profit] < @pnl[:drawdown]
+    deposit_cash(asof,qty*price)
     @positions[tkr][:qty] -= qty
+  end
+
+  def deposit_cash(asof,amount)
+    puts "deposit_cash(#{asof},#{amount})"
+    price = price(cash_tkr,asof)
+    qty   = amount / price
+puts "deposit_cash: price = #{price}"
+puts "deposit_cash: qty   = #{qty}"
+puts "deposit_cash: @positions = #{@positions}"
+puts "deposit_cash: @positions[#{cash_tkr}][:qty] = #{@positions[cash_tkr][:qty]}"
+puts "deposit_cash: @positions[#{cash_tkr}][:avg_px] = #{@positions[cash_tkr][:avg_px]}"
+    avg_price = (price*qty + @positions[cash_tkr][:qty]*@positions[cash_tkr][:avg_px]) / (qty+@positions[cash_tkr][:qty])
+    @positions[cash_tkr][:qty] += qty
+    @positions[cash_tkr][:avg_px] = avg_price
+  end
+
+  def withdraw_cash(asof,amount)
+    price = price(cash_tkr,asof)
+    qty   = amount / price
+    @positions[cash_tkr][:qty] -= qty
   end
 
   def equity(asof)
@@ -202,7 +264,7 @@ puts "@vdate=#{vdate}"
     puts "@rebalance_pd_method=#{@rebalance_pd_method}"
     dates = case @rebalance_pd_method
     when "eom"
-      eom_dates(@rebalance_pd).reverse
+      eom_dates(@eom_offset).reverse
     end 
     dates
   end

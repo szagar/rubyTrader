@@ -3,6 +3,8 @@ require "../zts/lib2/historical_prices"
 Env = "test"
 
 class BMR
+  attr_reader :cash
+
   def initialize(st_period=66, lt_period=132, st_wt=0.70, num=3)
     @st_period = st_period   # 3m * 22   short term period
     @lt_period = lt_period   # 6m * 22   long term period
@@ -104,11 +106,12 @@ class BMR
 
   def calc_return(prices,period)
     #puts "calc_return(#{period}): ((#{prices.first} - #{prices[period-1]}) / #{prices[period-1]}) * 100.0"
+puts "calc_return: prices=#{prices}"
     ((prices.first - prices[period-1]) / prices[period-1]) * 100.0
   end
 
   def load_prices(tkr,period,today)
-    @hp.price_array_desc(tkr,period,today).map { |rec| rec[4] }
+    @hp.price_array_desc(tkr,period,today).map { |rec| rec[:c] }
   end
 
   def rank(h)

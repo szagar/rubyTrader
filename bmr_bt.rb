@@ -22,16 +22,20 @@ bt.report_hdr
     (1...2).each do |months|
       (66...88).step(22) do |st_pd|
         (st_pd+66..st_pd+88).step(66) do |lt_pd|
-          bt.rebalance_period("eom",months)
-          bt.set_bt_start_dt(20070101)
-          bt.reset(100_000)
-          bt.strategy.set_num_positions(num)
-          bt.strategy.set_ma_signal_period(ma_pd)  # 88
-          bt.strategy.set_short_term_period(st_pd)
-          bt.strategy.set_long_term_period(lt_pd)
-          puts "run for num=#{num}, ma_pd=#{ma_pd}, rebal=#{months}eom, st=#{st_pd}, lt=#{lt_pd}"
-          bt.run
-          bt.report
+          (0...3).each do |eom_offset|
+            bt.eom_offset(eom_offset)
+            bt.rebalance_period("eom",months)
+            bt.set_bt_start_dt(20070101)
+            bt.reset(100_000)
+            bt.strategy.set_num_positions(num)
+            bt.strategy.set_ma_signal_period(ma_pd)  # 88
+            bt.strategy.set_short_term_period(st_pd)
+            bt.strategy.set_long_term_period(lt_pd)
+            puts "run for num=#{num}, ma_pd=#{ma_pd}, rebal=#{months}eom, st=#{st_pd}, lt=#{lt_pd}"
+            bt.run
+            bt.report
+exit
+          end
         end
       end
     end
