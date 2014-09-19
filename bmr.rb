@@ -15,6 +15,7 @@ class BMR
     @hp = HistoricalPrices.new(env)
 
     @cash        = "SHY"
+    @cash_ror    = 0.0
     @ma_period   = 4 * 22
     @top_tkrs    = []
     @tickers     = []
@@ -54,15 +55,21 @@ class BMR
 
     YahooProxy.rm_empty_price_files
 
+    @cash_ror    = calc_blended_ror(@cash_tkr,@today)
+    puts "@cash_ror = #{@cash_ror}"
     blended_rors = generate_rors(@today)
 
     ranked = rank(blended_rors)
 
     top_rors = ranked[0...@num]
 
-    trades = ma_filter(@today,top_rors)
-    target_pos = position_size(trades)
-    #print_report(@today,target_pos)
+puts "top_rors=#{top_rors}"
+    filtered_rors = ma_filter(@today,top_rors)
+puts "filtered_rors=#{filtered_rors}"
+
+    target_pos = position_size(filtered_rors.to_h.keys)
+puts "target_pos=#{target_pos}"
+    print_report(@today,target_pos)
     target_pos
   end
 
@@ -71,29 +78,33 @@ class BMR
   end
 
   def report_hdr
-    "num,ma_pd,lt_pd,sh_pd"
+    "num,ma_pd,lt_pd,sh_pd,cash"
   end
 
   def report_desc
-    [@num,@ma_period,@lt_period,@st_period].join ","
+    [@num,@ma_period,@lt_period,@st_period,@cash].join ","
   end
 
   private
 
   def generate_rors(asof)
     blended_rors = {}
-    @tickers.map do |tkr|
-      prices = load_prices(tkr,@lt_period+1,asof)  #desc [0] is asof
-      (puts "skip tkr #{tkr}/#{prices.count}"; next) unless prices.count > @lt_period
-      st_ror = calc_return(prices,@st_period)
-      lt_ror = calc_return(prices,@lt_period)
-      blended_rors[tkr] = calc_blended_ror(st_ror,lt_ror)
-      puts "Returns(#{tkr},#{asof}): #{st_ror.round(2)}/#{lt_ror.round(2)} = #{blended_rors[tkr].round(2)}"
-    end
+    @tickers.each { |tkr| blended_rors[tkr] = calc_blended_ror(tkr,asof) }
+    blended_rors.keys.sort.each { |tkr|
+      puts "Returns(#{tkr},#{asof}): #{blended_rors[tkr].round(2)}"
+    }
     blended_rors
   end
 
-  def calc_blended_ror(st_ror,lt_ror)
+  def calc_blended_ror(tkr,asof)
+    prices = load_prices(tkr,@lt_period+1,asof)  #desc [0] is asof
+    (puts "skip tkr #{tkr}/#{prices.count}"; return 0) unless prices.count > @lt_period
+    st_ror = calc_return(prices,@st_period)
+    lt_ror = calc_return(prices,@lt_period)
+    blend_rors(st_ror,lt_ror)
+  end
+
+  def blend_rors(st_ror,lt_ror)
       @st_wt * st_ror + (1.0-@st_wt) * lt_ror
   end
 
@@ -105,13 +116,12 @@ class BMR
   end
 
   def calc_return(prices,period)
-    #puts "calc_return(#{period}): ((#{prices.first} - #{prices[period-1]}) / #{prices[period-1]}) * 100.0"
-puts "calc_return: prices=#{prices}"
+    puts "calc_return(#{period}): ((#{prices.first} - #{prices[period-1]}) / #{prices[period-1]}) * 100.0"
     ((prices.first - prices[period-1]) / prices[period-1]) * 100.0
   end
 
   def load_prices(tkr,period,today)
-    @hp.price_array_desc(tkr,period,today).map { |rec| rec[:c] }
+    @hp.price_array_desc(tkr,period,today).map { |rec| rec[:ac] }
   end
 
   def rank(h)
@@ -119,8 +129,8 @@ puts "calc_return: prices=#{prices}"
   end
 
   def ma_filter(today,top_n)
-    filtered = top_n.map { |tkr,ror| ma_signal?(today,tkr) ? tkr : @cash }
-    filtered
+    top_n.select { |tkr,ror| ma_signal?(today,tkr) } # ? [tkr, ror]
+                                                #: [@cash, @cash_ror] }
   end
 
   def ma_signal?(today,tkr)
@@ -128,7 +138,7 @@ puts "calc_return: prices=#{prices}"
     #prices.first > calc_sma(prices,@ma_period)
     px  = prices.first 
     sma = calc_sma(prices,@ma_period)
-    #puts "BMR:ma_signal(#{today}/#{tkr}) #{px} > #{sma}"
+    puts "BMR:ma_signal(#{today}/#{tkr}) #{px} > #{sma}"
     px > sma
   end
 
@@ -143,15 +153,14 @@ puts "calc_return: prices=#{prices}"
     target.default = 0
     target[@cash]  = 100.0
     trades.each_with_index do |tkr,idx|
+puts "tkr=#{tkr}"
       target[tkr] += pos_percent
       target[@cash] -= pos_percent
     end
     target.delete_if { |k,v| v < 1.0 }
-    printf "target position: "
-    target.keys.sort.each { |k| printf "%5s: %5.2f%%", k, target[k] }
-    printf "\n"
-    #printf "%5s: %5.2f%% %5s: %5.2f%% %5s: %5.2f%%\n",*target.to_a.flatten
-    puts "target=#{target}"
+    #printf "target position: "
+    #target.keys.sort.each { |k| printf "%5s: %5.2f%%", k, target[k] }
+    #printf "\n"
     target
   end
 
