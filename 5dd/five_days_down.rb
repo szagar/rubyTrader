@@ -8,7 +8,8 @@
 #  * exits: stop loss below yesterdays low
 #  * notes: in bear market, if it fails below stop, then stop and reverse
 
-require "../zts/lib2/historical_prices"
+require_relative "../zts/lib2/historical_prices"
+require_relative "../zts/lib2/mystdlib/tc_data"
 
 Env = "test"
 
@@ -17,6 +18,7 @@ class FiveDaysDown
 
   def initialize(tkr,tc_data)
     @tkr = tkr
+    @tc = TcData.new(tc_data)
   end
 
   def descr
@@ -38,6 +40,7 @@ class FiveDaysDown
   private
 
   def number_of_consecutive_days_down
+    @tc.consecutive_down_days
   end
 
   def buy(tdate,tkr)
