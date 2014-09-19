@@ -1,14 +1,14 @@
-require "../zts/lib2/historical_prices"
-require "../zts/lib2/price_series_helper"
-require "../zts/lib2/date_time_helper"
+#require "../zts/lib2/price_series_helper"
+#require "../zts/lib2/date_time_helper"
+require_relative "../../zts/lib2/tc_helper"
 
 #Env = "test"
 
 class BackTester
   attr_reader :strategy
 
-  def initialize(strategy)
-    @strategy = strategy
+  def initialize
+    @strategies = []
     @date_ptr  = 0
     @tickers   = []
     @positions = {}
@@ -30,7 +30,7 @@ class BackTester
 
   def set_bt_start_dt(dt)
     #puts "def set_bt_start_dt(#{dt})"
-    @bt_start_dt = load_dates(dt).last
+    @bt_start_dt = @strategies[0].load_dates(dt).last
   end
 
   def reset(amount)
@@ -41,27 +41,26 @@ class BackTester
     deposit(@bt_start_dt,amount)
   end
 
-  def set_symbol_file(fn)
-    File.open(fn).each { |tkr| add_ticker(tkr.chomp.rstrip) }
-    @symbol_file = File.basename(fn,".symbols")
-  end
-
-  def add_ticker(tkr)
-    @tickers << tkr if tkr_qualifies?(tkr)
+  def add_strategy(strategy,tc_fn)
+    @strategies << strategy.new(tc_fn)
   end
 
   def run
-    tdates = @hp.dates_array.select { |dt| dt >= @bt_start_dt }
-    tdates.each do |tdate|
-      @strategies.each do |s|
-        entry = @strategies.entries(tdate)
+    run_dates = @strategies[0].tc.dates.select {|d| d >= @bt_start_dt}
+    run_dates.each do |tdate|
+      @strategies.each do |strat|
+        strat.tc.set_asof(tdate)
+        entry = strat.entries(tdate)
         if entry
           submit_entry(entry)
-          submit_exit(entry) if entry.key_exists?(:stop_loss) && entry[:stop_loss] > 0
+          if entry.key_exists?(:init_stop) && entry[:init_stop] > 0
+            submit_exit({stop_loss: entry[:init_stop]})
+          end
         end
       end
       @positions.each do |pos|
-        exit = @strategies.exits(tdate)
+        price_hash = @strategies[pos[:tkr]].tc.ohlc
+        exit = exit_mgr(pos,price_hash)
         submit_exit(exit) if exit
       end
     end
@@ -78,21 +77,6 @@ class BackTester
     end
   end
 
-  def buy(tdate,tkr)
-    size = position_size(tdate,tkr,pos_risk)
-    price = entry_stop_price(tdate,tkr)
-    {:tkr => tkr, :quantity => size, :stop_price => price}
-  end
-
-  def pos_risk
-    500
-  end
-
-  def position_size(tdate,tkr,risk)
-    atr = atr_lookup(tdate,tkr)
-    risk / atr
-  end
-
   def entry_stop_price(tdate,tkr)
     asof = prev_tdate(tdate)
     high(tkr,asof)
@@ -105,7 +89,8 @@ class BackTester
   end
 
   def report_hdr
-    @rpt_fh.write sprintf "symbolList,start_dt,%s,peak,profit,drawdown\n",@strategy.report_hdr
+    puts "report_hdr entered."
+    #@rpt_fh.write sprintf "symbolList,start_dt,%s,peak,profit,drawdown\n",@strategy.report_hdr
   end
 
   def report
@@ -116,6 +101,24 @@ class BackTester
   end
 
   private
+
+  def buy(tdate,tkr)
+    size = position_size(tdate,tkr,pos_risk)
+    price = entry_stop_price(tdate,tkr)
+    {:tkr => tkr, :quantity => size, :stop_price => price}
+  end
+
+  def pos_risk
+    500
+  end
+
+  def position_size(tdate,tkr,risk_pos,cap_pos)
+    atr = @tc.atr(asof,period)
+    size = (risk_pos / (atr*atr_factor)).to_i
+    return size if size*tc.last <= cap_pos
+    return (cap_pos/tc.last).to_i if adj4cap?
+    0
+  end
 
   def cash_tkr
     @strategy.cash
